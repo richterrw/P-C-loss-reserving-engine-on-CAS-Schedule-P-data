@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{color-scheme:light;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}img{max-width:100%}[hidden]{display:none!important}</style>
+<title>Schedule P Reserving Backtest</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Chain ladder, Bornhuetter-Ferguson, Munich chain ladder, Mack and ODP bootstrap run on 327 NAIC Schedule P triangles and scored against nine years of actual outcomes.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:wght@500;600&family=Public+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column (~68ch) with full-width figure rows; ledger-like rules, no cards. */
+:root {
+  --bg: #f5f7f8;
+  --surface: #ffffff;
+  --ink: #14202a;
+  --muted: #556370;
+  --rule: #dde3e8;
+  --accent: #1d5c86;
+  --paid: #eb6834;
+  --incurred: #2a78d6;
+  --mcl: #1baf7a;
+  --booked: #8a96a1;
+  --neutral-seg: #c9d3db;
+  --cell-empty: #eef2f5;
+  --font-display: "Spectral", Georgia, "Times New Roman", serif;
+  --font-body: "Public Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10161b; --surface: #172029; --ink: #e6edf2; --muted: #9aa8b4; --rule: #2a3540;
+    --accent: #6fb0dd; --paid: #d95926; --incurred: #3987e5; --mcl: #199e70; --booked: #6f7c88;
+    --neutral-seg: #3a4753; --cell-empty: #1c2731; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10161b; --surface: #172029; --ink: #e6edf2; --muted: #9aa8b4; --rule: #2a3540;
+  --accent: #6fb0dd; --paid: #d95926; --incurred: #3987e5; --mcl: #199e70; --booked: #6f7c88;
+  --neutral-seg: #3a4753; --cell-empty: #1c2731; color-scheme: dark;
+}
+
+body {
+  background: var(--bg); color: var(--ink);
+  font: 400 16px/1.6 var(--font-body);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 40px 64px;
+}
+main { max-width: 980px; margin: 0 auto; display: grid; gap: 56px; }
+.prose { max-width: 68ch; }
+h1, h2 { font-family: var(--font-display); font-weight: 600; line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2rem, 5vw, 3.1rem); letter-spacing: -0.01em; }
+h2 { font-size: clamp(1.4rem, 3vw, 1.85rem); }
+p { margin: 0; }
+.eyebrow { font: 500 0.75rem/1.2 var(--font-data); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.lede { font-size: 1.1rem; color: var(--muted); }
+.stack { display: grid; gap: 14px; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+.num { font-family: var(--font-data); font-variant-numeric: tabular-nums; }
+section { border-top: 1px solid var(--rule); padding-top: 28px; display: grid; gap: 20px; }
+
+/* hero */
+.hero { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 40px; align-items: center; }
+@media (max-width: 760px) { .hero { grid-template-columns: minmax(0, 1fr); } }
+.links { display: flex; flex-wrap: wrap; gap: 10px 22px; font-weight: 500; }
+figure { margin: 0; }
+figcaption { font-size: 0.85rem; color: var(--muted); margin-top: 10px; }
+.tri { display: grid; grid-template-columns: auto repeat(10, minmax(0, 1fr)); gap: 3px; font: 400 0.68rem/1 var(--font-data); color: var(--muted); }
+.tri .cell { aspect-ratio: 1; border-radius: 2px; max-width: 100%; }
+.tri .future { background: var(--cell-empty); outline: 1px dashed var(--rule); outline-offset: -1px; }
+.tri .lab { display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; }
+.tri .collab { text-align: center; padding-top: 4px; }
+.tri-key { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.8rem; color: var(--muted); margin-top: 10px; }
+.tri-key span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 12px; height: 12px; border-radius: 2px; display: inline-block; }
+
+/* key figures */
+.figures { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; border-block: 1px solid var(--rule); }
+@media (max-width: 760px) { .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.fig { padding: 18px 16px 18px 0; display: grid; gap: 4px; align-content: start; }
+.fig + .fig { padding-left: 16px; border-left: 1px solid var(--rule); }
+@media (max-width: 760px) { .fig:nth-child(3) { border-left: 0; padding-left: 0; } .fig:nth-child(n+3) { border-top: 1px solid var(--rule); } }
+.fig .big { font: 500 1.9rem/1.1 var(--font-data); font-variant-numeric: tabular-nums; }
+.fig .cap { font-size: 0.85rem; color: var(--muted); }
+
+/* identity block */
+.identity { background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; padding: 18px 20px; overflow-x: auto; }
+.identity code { font: 500 clamp(0.85rem, 2.4vw, 1.05rem)/1.7 var(--font-data); white-space: pre; display: block; color: var(--ink); }
+.reasons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 36px; }
+@media (max-width: 760px) { .reasons { grid-template-columns: minmax(0, 1fr); } }
+.reasons h3 { font: 600 1rem/1.3 var(--font-body); margin: 0 0 4px; }
+.reasons p { color: var(--muted); font-size: 0.95rem; }
+
+/* charts */
+.chart { width: 100%; min-width: 640px; height: auto; display: block; overflow: visible; }
+.chart text { fill: var(--muted); font: 400 12px var(--font-body); }
+.chart .lbl { fill: var(--ink); }
+.chart .tick { font-family: var(--font-data); font-size: 11px; }
+.chart .grid { stroke: var(--rule); stroke-width: 1; }
+.chart .zero { stroke: var(--muted); stroke-width: 1; }
+.chart .hit { fill: transparent; }
+.chart .row:hover .hit, .chart .row:focus .hit { fill: var(--cell-empty); }
+.chart .row:focus { outline: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.82rem; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.chart-wrap { overflow-x: auto; }
+.tip { position: fixed; pointer-events: none; background: var(--surface); color: var(--ink); border: 1px solid var(--rule); border-radius: 4px; padding: 6px 9px; font: 400 0.8rem/1.4 var(--font-body); box-shadow: 0 4px 14px rgb(0 0 0 / 0.12); z-index: 5; }
+
+/* validation table */
+.tbl-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { text-align: left; padding: 8px 12px 8px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font: 500 0.72rem/1.2 var(--font-data); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+td.r, th.r { text-align: right; }
+td.ok { color: var(--mcl); font-weight: 600; }
+
+footer { color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--rule); padding-top: 20px; }
+@media (prefers-reduced-motion: no-preference) {
+  .tri .cell { transition: transform 120ms ease; }
+  .tri .cell:hover { transform: scale(1.12); }
+}
+</style>
+</head>
+<body>
+
+<main>
+  <header class="hero">
+    <div class="stack">
+      <p class="eyebrow">P&amp;C loss reserving · NAIC Schedule P · 1988–2006</p>
+      <h1>Seven reserving methods, scored against what actually happened</h1>
+      <p class="lede">A from-scratch reserving engine runs chain ladder, Bornhuetter-Ferguson, Cape Cod, Benktander, Munich chain ladder, Mack and the ODP bootstrap on 327 real company triangles as of December 1997, then checks every estimate against the nine years of payments that followed.</p>
+      <div class="links">
+        <a href="https://github.com/richterrw/P-C-loss-reserving-engine-on-CAS-Schedule-P-data">Code on GitHub</a>
+        <a href="https://github.com/richterrw/P-C-loss-reserving-engine-on-CAS-Schedule-P-data/blob/HEAD/reports/REPORT.md">Full report</a>
+        <a href="https://github.com/richterrw/P-C-loss-reserving-engine-on-CAS-Schedule-P-data#why-the-methods-disagree">Why methods disagree</a>
+      </div>
+    </div>
+    <figure>
+      <div class="tri" id="tri" role="img" aria-label="Paid loss development triangle for State Farm other liability, accident years 1988 to 1997, shaded by share of ultimate paid. Cells after 1997 are the outcomes used for scoring."></div>
+      <div class="tri-key">
+        <span><i class="sw" style="background: var(--accent)"></i>Known at 12/1997 (shade = % of ultimate paid)</span>
+        <span><i class="sw" style="background: var(--cell-empty); outline: 1px dashed var(--rule)"></i>Paid 1998–2006: the answer key</span>
+      </div>
+      <figcaption>State Farm, other liability, paid losses. Rows are accident years 1988–1997; columns are years of development.</figcaption>
+    </figure>
+  </header>
+
+  <div class="figures" aria-label="Key results">
+    <div class="fig"><span class="big">327</span><span class="cap">company triangles across six lines, each scored against its actual outcome</span></div>
+    <div class="fig"><span class="big">+10%</span><span class="cap">median over-reserving by paid chain ladder; it overshot in all six lines</span></div>
+    <div class="fig"><span class="big">−1%</span><span class="cap">median error once Munich chain ladder reconciles paid with incurred</span></div>
+    <div class="fig"><span class="big">+21%</span><span class="cap">median redundancy in the companies' own booked reserves</span></div>
+  </div>
+
+  <section>
+    <div class="stack prose">
+      <p class="eyebrow">Accuracy</p>
+      <h2>Incurred-based methods were close to unbiased; paid methods overshot</h2>
+      <p>Each line is the middle half of companies; the dot is the median. Error is the reserve error as a share of the amount that was actually still unpaid at the end of 1997.</p>
+    </div>
+    <div class="legend" aria-hidden="true">
+      <span><i class="sw" style="background: var(--paid)"></i>Paid data</span>
+      <span><i class="sw" style="background: var(--incurred)"></i>Incurred data</span>
+      <span><i class="sw" style="background: var(--mcl)"></i>Paid and incurred reconciled</span>
+      <span><i class="sw" style="background: var(--booked)"></i>Company's own booking</span>
+    </div>
+    <div class="chart-wrap"><svg class="chart" id="errChart" role="img" aria-label="Median and interquartile reserve error by method"></svg></div>
+  </section>
+
+  <section>
+    <div class="stack prose">
+      <p class="eyebrow">Why they disagree</p>
+      <h2>The gap between chain ladder and BF is leverage times surprise</h2>
+      <p>Every expected-loss method blends the chain ladder answer with a prior. One line of algebra shows where the disagreement comes from:</p>
+    </div>
+    <div class="identity"><code>U_CL − U_BF  =  (1 − 1/CDF)  ×  (U_CL − U_prior)
+                 leverage        surprise</code></div>
+    <p class="prose">For State Farm other liability, accident year 1997, only $21M had been paid and the development factor was 30.6. Chain ladder projected $645M. BF projected $307M. The actual was $329M. Ninety percent of that company's gap sat in its three newest accident years.</p>
+    <div class="reasons">
+      <div><h3>Paid vs. incurred</h3><p>Paid chain ladder assumes settlement speed is stable. Claims were paid faster through the 1990s, so recent years looked more developed than they were and paid projections overshot.</p></div>
+      <div><h3>The prior</h3><p>Cape Cod uses one flat loss ratio. When a book's loss ratios trend down, as State Farm auto's did from 87% to 68%, a flat prior overstates every recent year.</p></div>
+      <div><h3>Case reserves</h3><p>A med mal insurer's incurred losses fell as over-set case reserves were released. Incurred methods tracked it; paid chain ladder missed by 48%; the company's own booking was 96% high.</p></div>
+      <div><h3>Reconciliation has limits</h3><p>Munich chain ladder pulls paid toward incurred and closes the gap between them from 3.9% to 0.8%. Where case reserves were wrong, it inherits their error.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="stack prose">
+      <p class="eyebrow">Uncertainty</p>
+      <h2>The ranges were too confident</h2>
+      <p>A calibrated model puts 10% of actual outcomes below its 10th percentile and 10% above its 90th. On paid data, roughly 28% fell below: the mean was biased, and no amount of extra spread fixes that. Shapland's bootstrap refinements came closest on incurred data, at a third less width than the plain bootstrap.</p>
+    </div>
+    <div class="legend" aria-hidden="true">
+      <span><i class="sw" style="background: var(--paid)"></i>Below 10th percentile</span>
+      <span><i class="sw" style="background: var(--neutral-seg)"></i>Inside 10th–90th</span>
+      <span><i class="sw" style="background: var(--incurred)"></i>Above 90th percentile</span>
+    </div>
+    <div class="chart-wrap"><svg class="chart" id="calChart" role="img" aria-label="Share of outcomes below, inside and above each model's 10 to 90 percentile band"></svg></div>
+  </section>
+
+  <section>
+    <div class="stack prose">
+      <p class="eyebrow">Validation</p>
+      <h2>Every method reproduces published results before it touches real data</h2>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>Benchmark</th><th>Quantity</th><th class="r">Published</th><th class="r">This engine</th></tr></thead>
+        <tbody>
+          <tr><td>RAA (Mack 1993)</td><td>Mack total standard error</td><td class="r num">26,909</td><td class="r num ok">26,909</td></tr>
+          <tr><td>Taylor-Ashe</td><td>Mack total standard error</td><td class="r num">2,447,095</td><td class="r num ok">2,447,095</td></tr>
+          <tr><td>Taylor-Ashe (England-Verrall)</td><td>ODP scale parameter</td><td class="r num">52,601</td><td class="r num ok">52,601</td></tr>
+          <tr><td>Quarg-Mack</td><td>Munich chain ladder paid / incurred ultimate</td><td class="r num">32,444 / 32,708</td><td class="r num ok">32,444 / 32,708</td></tr>
+          <tr><td>RAA (Mack 1994)</td><td>Calendar-year test Z / correlation T</td><td class="r num">14 / 0.070</td><td class="r num ok">14 / 0.070</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>
+    Data: CAS Loss Reserving Database (Meyers &amp; Shi), NAIC Schedule P, net of reinsurance. Actual outcome = case incurred at development year 10. Methods implemented in NumPy and SciPy with no actuarial libraries; 21 tests run in CI.
+  </footer>
+</main>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+(function () {
+  const tri = [[0.03,0.21,0.41,0.72,0.83,0.91,0.94,0.97,0.98,1.0],[0.05,0.21,0.46,0.64,0.78,0.89,0.93,0.95,0.99,0.99],[0.03,0.23,0.5,0.74,0.83,0.9,0.95,0.97,0.99,1.0],[0.02,0.25,0.52,0.73,0.82,0.89,0.96,0.98,0.99,1.0],[0.03,0.26,0.49,0.67,0.77,0.86,0.92,0.96,0.98,0.99],[0.03,0.32,0.58,0.76,0.85,0.91,0.94,0.95,0.97,0.99],[0.04,0.25,0.5,0.71,0.85,0.93,0.96,0.98,0.99,1.0],[0.03,0.29,0.56,0.76,0.88,0.95,0.98,0.99,0.99,1.0],[0.06,0.29,0.56,0.73,0.87,0.92,0.96,0.97,0.98,0.99],[0.06,0.35,0.61,0.78,0.86,0.91,0.93,0.96,0.98,0.99]];
+  const errors = [{"m":"CL Paid","q1":-0.131,"med":0.1,"q3":0.371,"mae":0.254,"k":"paid"},{"m":"BF Paid","q1":-0.082,"med":0.122,"q3":0.531,"mae":0.222,"k":"paid"},{"m":"Cape Cod Paid","q1":-0.101,"med":0.119,"q3":0.351,"mae":0.247,"k":"paid"},{"m":"Benktander Paid","q1":-0.052,"med":0.11,"q3":0.386,"mae":0.221,"k":"paid"},{"m":"CL Incurred","q1":-0.208,"med":-0.03,"q3":0.186,"mae":0.194,"k":"incurred"},{"m":"BF Incurred","q1":-0.171,"med":-0.004,"q3":0.21,"mae":0.186,"k":"incurred"},{"m":"Cape Cod Incurred","q1":-0.173,"med":-0.018,"q3":0.185,"mae":0.179,"k":"incurred"},{"m":"Benktander Incurred","q1":-0.169,"med":-0.011,"q3":0.205,"mae":0.189,"k":"incurred"},{"m":"Munich CL Paid","q1":-0.195,"med":-0.006,"q3":0.2,"mae":0.2,"k":"mcl"},{"m":"Munich CL Incurred","q1":-0.193,"med":-0.003,"q3":0.171,"mae":0.175,"k":"mcl"},{"m":"Company booked","q1":-0.022,"med":0.213,"q3":0.536,"mae":0.268,"k":"booked"}];
+  const cal = [{"m":"Mack, paid","b":0.269,"i":0.593,"a":0.138,"cv":0.041},{"m":"Bootstrap, paid","b":0.278,"i":0.596,"a":0.125,"cv":0.043},{"m":"Shapland bootstrap, paid","b":0.297,"i":0.572,"a":0.131,"cv":0.039},{"m":"Mack, incurred","b":0.141,"i":0.642,"a":0.217,"cv":0.036},{"m":"Bootstrap, incurred","b":0.095,"i":0.81,"a":0.095,"cv":0.096},{"m":"Shapland bootstrap, incurred","b":0.104,"i":0.78,"a":0.116,"cv":0.066},{"m":"Ideal","b":0.10,"i":0.80,"a":0.10,"cv":null}];
+
+  const NS = "http://www.w3.org/2000/svg";
+  const el = (tag, attrs, parent) => { const e = document.createElementNS(NS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; };
+  const pct = (v, sign) => (sign && v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(Math.round(v * 100)) + "%";
+  const tip = document.getElementById("tip");
+  function showTip(evt, html) {
+    tip.innerHTML = html; tip.hidden = false;
+    const r = evt.currentTarget.getBoundingClientRect();
+    const x = evt.clientX ?? (r.left + r.width / 2), y = evt.clientY ?? r.top;
+    const w = tip.offsetWidth;
+    tip.style.left = Math.min(Math.max(8, x + 12), window.innerWidth - w - 8) + "px";
+    tip.style.top = (y + 16) + "px";
+  }
+  const hideTip = () => { tip.hidden = true; };
+
+  // Hero triangle: real shading for the known cells, dashed outlines for the answer key.
+  const T = document.getElementById("tri");
+  T.appendChild(Object.assign(document.createElement("span"), { className: "lab" }));
+  for (let j = 0; j < 10; j++) T.appendChild(Object.assign(document.createElement("span"), { className: "lab collab", textContent: j + 1, style: "justify-content:center;padding:0 0 4px" }));
+  tri.forEach((row, i) => {
+    T.appendChild(Object.assign(document.createElement("span"), { className: "lab", textContent: 1988 + i }));
+    row.forEach((v, j) => {
+      const c = document.createElement("span");
+      const known = i + j <= 9;
+      c.className = "cell" + (known ? "" : " future");
+      if (known) c.style.background = `color-mix(in srgb, var(--accent) ${Math.round(18 + 82 * v)}%, var(--cell-empty))`;
+      const label = `AY ${1988 + i}, year ${j + 1}: ${Math.round(v * 100)}% of ultimate paid${known ? "" : " (after 1997)"}`;
+      c.addEventListener("mousemove", e => showTip(e, label));
+      c.addEventListener("mouseleave", hideTip);
+      T.appendChild(c);
+    });
+  });
+
+  // Error interval chart.
+  const colorOf = { paid: "var(--paid)", incurred: "var(--incurred)", mcl: "var(--mcl)", booked: "var(--booked)" };
+  (function () {
+    const svg = document.getElementById("errChart");
+    const W = 900, left = 170, right = 70, rowH = 30, top = 10, H = top + errors.length * rowH + 34;
+    const lo = -0.3, hi = 0.6, x = v => left + (v - lo) / (hi - lo) * (W - left - right);
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    for (let t = -0.2; t <= 0.61; t += 0.2) {
+      const tv = Math.round(t * 10) / 10;
+      el("line", { x1: x(tv), x2: x(tv), y1: top, y2: H - 28, class: tv === 0 ? "zero" : "grid" }, svg);
+      el("text", { x: x(tv), y: H - 10, "text-anchor": "middle", class: "tick" }, svg).textContent = pct(tv, true);
+    }
+    errors.forEach((d, k) => {
+      const y = top + k * rowH + rowH / 2;
+      const g = el("g", { class: "row", tabindex: 0, "aria-label": `${d.m}: median ${pct(d.med, true)}, middle half ${pct(d.q1, true)} to ${pct(d.q3, true)}` }, svg);
+      el("rect", { x: 0, y: y - rowH / 2, width: W, height: rowH, class: "hit", rx: 3 }, g);
+      el("text", { x: left - 12, y: y + 4, "text-anchor": "end", class: "lbl" }, g).textContent = d.m;
+      el("line", { x1: x(d.q1), x2: x(d.q3), y1: y, y2: y, stroke: colorOf[d.k], "stroke-width": 2, "stroke-linecap": "round" }, g);
+      el("circle", { cx: x(d.med), cy: y, r: 5.5, fill: colorOf[d.k], stroke: "var(--bg)", "stroke-width": 2 }, g);
+      el("text", { x: W - right + 10, y: y + 4, class: "tick" }, g).textContent = pct(d.med, true);
+      const html = `<strong>${d.m}</strong><br>Median error ${pct(d.med, true)}<br>Middle half ${pct(d.q1, true)} to ${pct(d.q3, true)}<br>Median absolute error ${pct(d.mae)}`;
+      g.addEventListener("mousemove", e => showTip(e, html));
+      g.addEventListener("focus", e => showTip(e, html));
+      g.addEventListener("mouseleave", hideTip);
+      g.addEventListener("blur", hideTip);
+    });
+  })();
+
+  // Calibration stacked bars.
+  (function () {
+    const svg = document.getElementById("calChart");
+    const W = 900, left = 210, right = 90, rowH = 34, top = 6, H = top + cal.length * rowH + 8;
+    const x = v => left + v * (W - left - right);
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    cal.forEach((d, k) => {
+      const y = top + k * rowH, h = 20, yb = y + (rowH - h) / 2;
+      const ideal = d.m === "Ideal";
+      const g = el("g", { class: "row", tabindex: 0, "aria-label": `${d.m}: ${pct(d.b)} below, ${pct(d.i)} inside, ${pct(d.a)} above` }, svg);
+      el("rect", { x: 0, y, width: W, height: rowH, class: "hit", rx: 3 }, g);
+      el("text", { x: left - 12, y: yb + 14, "text-anchor": "end", class: "lbl", "font-style": ideal ? "italic" : "normal" }, g).textContent = d.m;
+      const segs = [[d.b, "var(--paid)"], [d.i, "var(--neutral-seg)"], [d.a, "var(--incurred)"]];
+      let acc = 0;
+      segs.forEach(([v, c], s) => {
+        const x0 = x(acc) + (s ? 1 : 0), x1 = x(acc + v) - (s < 2 ? 1 : 0);
+        el("rect", { x: x0, y: yb, width: Math.max(0, x1 - x0), height: h, fill: c, rx: 2, opacity: ideal ? 0.55 : 1 }, g);
+        acc += v;
+      });
+      el("text", { x: x(d.b / 2), y: yb + 14, "text-anchor": "middle", class: "tick", style: "fill: var(--surface)" }, g).textContent = d.b >= 0.08 ? pct(d.b) : "";
+      el("text", { x: W - right + 10, y: yb + 14, class: "tick" }, g).textContent = d.cv ? "CV " + (d.cv * 100).toFixed(1) + "%" : "";
+      const html = `<strong>${d.m}</strong><br>Below 10th percentile ${pct(d.b)}<br>Inside 10th–90th ${pct(d.i)}<br>Above 90th ${pct(d.a)}` + (d.cv ? `<br>Median width (CV) ${(d.cv * 100).toFixed(1)}%` : "");
+      g.addEventListener("mousemove", e => showTip(e, html));
+      g.addEventListener("focus", e => showTip(e, html));
+      g.addEventListener("mouseleave", hideTip);
+      g.addEventListener("blur", hideTip);
+    });
+  })();
+})();
+</script>
+</body>
+</html>
