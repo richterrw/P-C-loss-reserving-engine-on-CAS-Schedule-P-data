@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "P&C Loss Reserving Engine on CAS Schedule P Data"
+abstract: >-
+  Chain ladder, Bornhuetter-Ferguson, Cape Cod, Benktander, Munich chain ladder,
+  Mack and ODP bootstrap reserving methods, validated against published results
+  and backtested on 327 NAIC Schedule P triangles from the CAS Loss Reserving Database.
+authors:
+  - given-names: Robbie
+    family-names: Richter
+repository-code: "https://github.com/richterrw/P-C-loss-reserving-engine-on-CAS-Schedule-P-data"
+url: "https://richterrw.github.io/P-C-loss-reserving-engine-on-CAS-Schedule-P-data/"
+license: MIT
+keywords: [actuarial, loss reserving, chain ladder, Bornhuetter-Ferguson, Mack, bootstrap, Schedule P]
