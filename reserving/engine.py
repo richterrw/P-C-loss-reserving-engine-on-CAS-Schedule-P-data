@@ -23,6 +23,7 @@ from .bootstrap import BootstrapResult, odp_bootstrap
 from .chainladder import ChainLadderResult, chain_ladder
 from .data import CompanyData, clean_companies, company
 from .mack import MackResult, mack
+from .munich import MunichResult, munich_chain_ladder
 from .triangle import Triangle
 
 BASES = ("paid", "incurred")
@@ -58,8 +59,10 @@ class CompanyAnalysis:
     cl: dict[str, ChainLadderResult]
     estimates: dict[str, np.ndarray]           # method label -> ultimate by AY
     prior_elr: np.ndarray
+    munich: MunichResult | None = None
     mack: dict[str, MackResult] = field(default_factory=dict)
     boot: dict[str, BootstrapResult] = field(default_factory=dict)
+    boot_shapland: dict[str, BootstrapResult] = field(default_factory=dict)
 
     @property
     def actual(self) -> np.ndarray:
@@ -95,7 +98,7 @@ class CompanyAnalysis:
         return pd.DataFrame(rows).set_index("method")
 
 
-def point_estimates(cd: CompanyData, prior_elr: np.ndarray) -> tuple[dict, dict]:
+def point_estimates(cd: CompanyData, prior_elr: np.ndarray) -> tuple[dict, dict, MunichResult]:
     tail = {"paid": paid_tail(cd), "incurred": 1.0}
     cls = {b: chain_ladder(cd.triangle(b), tail=tail[b]) for b in BASES}
     est = {}
@@ -105,17 +108,23 @@ def point_estimates(cd: CompanyData, prior_elr: np.ndarray) -> tuple[dict, dict]
         est[f"BF {tag}"] = bornhuetter_ferguson(cl, cd.premium, prior_elr).ultimate
         est[f"Cape Cod {tag}"] = cape_cod(cl, cd.premium).ultimate
         est[f"Benktander {tag}"] = benktander(cl, cd.premium, prior_elr).ultimate
+    # Paid/incurred reconciling methods (section 4 of the README).
+    mcl = munich_chain_ladder(cd.paid, cd.incurred)
+    est["MCL Paid"] = mcl.paid_ultimate * tail["paid"]
+    est["MCL Incurred"] = mcl.incurred_ultimate
     est["Company booked"] = cd.booked_ultimate
-    return cls, est
+    return cls, est, mcl
 
 
 def analyze(lob: str, grcode: int, n_sims: int = 5000, seed: int = 2024, variability: bool = True) -> CompanyAnalysis:
     cd = company(lob, grcode)
     prior = industry_elr(lob)
-    cls, est = point_estimates(cd, prior)
-    out = CompanyAnalysis(cd, cls, est, prior)
+    cls, est, mcl = point_estimates(cd, prior)
+    out = CompanyAnalysis(cd, cls, est, prior, mcl)
     if variability:
         for b in BASES:
             out.mack[b] = mack(cd.triangle(b))
             out.boot[b] = odp_bootstrap(cd.triangle(b), n_sims=n_sims, seed=seed)
+            out.boot_shapland[b] = odp_bootstrap(cd.triangle(b), n_sims=n_sims, seed=seed,
+                                                 hat_adjust=True, hetero=True)
     return out

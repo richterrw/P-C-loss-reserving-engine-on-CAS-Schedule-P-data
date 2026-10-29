@@ -23,12 +23,14 @@ sys.path.insert(0, str(ROOT))
 
 from reserving import backtest as bt  # noqa: E402
 from reserving import diagnostics as dg  # noqa: E402
-from reserving.benchmarks import load_benchmark  # noqa: E402
-from reserving.bootstrap import odp_bootstrap  # noqa: E402
+from reserving.benchmarks import BENCH_DIR, load_benchmark  # noqa: E402
+from reserving.bootstrap import fitted_incrementals, hat_diagonal, odp_bootstrap  # noqa: E402
 from reserving.chainladder import chain_ladder  # noqa: E402
 from reserving.data import LINES  # noqa: E402
 from reserving.engine import analyze  # noqa: E402
 from reserving.mack import mack  # noqa: E402
+from reserving.munich import munich_chain_ladder  # noqa: E402
+from reserving.triangle import Triangle, upper_mask  # noqa: E402
 
 OUT = ROOT / "reports"
 FIG = OUT / "figures"
@@ -75,6 +77,9 @@ def benchmark_section() -> str:
     raa, gen = load_benchmark("raa"), load_benchmark("genins")
     rm, gm = mack(raa), mack(gen)
     gb = odp_bootstrap(gen, n_sims=10_000, seed=1)
+    d = pd.read_csv(BENCH_DIR / "mcl.csv")
+    d["lag"] = d.development - d.origin + 1
+    mcl = munich_chain_ladder(Triangle.from_long(d, "origin", "lag", "paid"), Triangle.from_long(d, "origin", "lag", "incurred"))
     rows = [
         ("RAA", "Chain ladder reserve", 52_135, chain_ladder(raa).reserve.sum(), "Mack (1993)"),
         ("RAA", "Mack total s.e.", 26_909, rm.total_se, "Mack (1993); R ChainLadder"),
@@ -83,6 +88,10 @@ def benchmark_section() -> str:
         ("Taylor-Ashe", "Mack total s.e.", 2_447_095, gm.total_se, "Mack (1993); R ChainLadder"),
         ("Taylor-Ashe", "ODP scale parameter phi", 52_601, gb.phi, "England & Verrall (2002)"),
         ("Taylor-Ashe", "Bootstrap prediction error / reserve", "~16%", f"{gb.total_se / gb.total.mean():.1%}", "England & Verrall (2002)"),
+        ("Taylor-Ashe", "ODP GLM hat-matrix trace (= parameters)", 19, np.nansum(hat_diagonal(fitted_incrementals(gen), upper_mask(gen.n))), "Shapland (2016)"),
+        ("Quarg-Mack", "MCL lambda paid / incurred", "0.6360 / 0.4362", f"{mcl.lambda_paid:.4f} / {mcl.lambda_incurred:.4f}", "chainladder-python MunichAdjustment"),
+        ("Quarg-Mack", "MCL ultimate paid", 32_444, mcl.paid_ultimate.sum(), "chainladder-python MunichAdjustment"),
+        ("Quarg-Mack", "MCL ultimate incurred", 32_708, mcl.incurred_ultimate.sum(), "chainladder-python MunichAdjustment"),
     ]
     df = pd.DataFrame(rows, columns=["triangle", "quantity", "published", "this engine", "source"])
     for c in ("published", "this engine"):
@@ -100,7 +109,7 @@ def benchmark_section() -> str:
 
 
 # ----------------------------------------------------------------- showcases
-POINT_METHODS = ["CL Paid", "CL Incurred", "BF Paid", "BF Incurred", "Cape Cod Incurred"]
+POINT_METHODS = ["CL Paid", "CL Incurred", "BF Paid", "BF Incurred", "Cape Cod Incurred", "MCL Paid"]
 
 
 def fig_ultimates(a, path: Path) -> None:
@@ -287,9 +296,10 @@ def fig_calibration(df: pd.DataFrame, path: Path) -> None:
 
 
 def fig_errors(df: pd.DataFrame, path: Path) -> None:
-    methods = ["CL Paid", "BF Paid", "Cape Cod Paid", "CL Incurred", "BF Incurred", "Cape Cod Incurred", "Benktander Incurred", "Company booked"]
+    methods = ["CL Paid", "BF Paid", "Cape Cod Paid", "CL Incurred", "BF Incurred", "Cape Cod Incurred",
+               "Benktander Incurred", "MCL Paid", "MCL Incurred", "Company booked"]
     err = [((df[f"ult::{m}"] - df.actual_ult) / df.actual_unpaid).clip(-1.5, 1.5) for m in methods]
-    fig, ax = plt.subplots(figsize=(7.2, 3.8))
+    fig, ax = plt.subplots(figsize=(7.2, 4.4))
     bp = ax.boxplot(err, orientation="horizontal", tick_labels=methods, showfliers=False, widths=0.55, patch_artist=True,
                     medianprops={"color": INK, "lw": 1.8}, whiskerprops={"color": MUTED}, capprops={"color": MUTED})
     for patch in bp["boxes"]:
@@ -315,7 +325,7 @@ def backtest_section(sims: int) -> str:
     fig_errors(df, FIG / "backtest_errors.png")
 
     order = ["CL Paid", "BF Paid", "Cape Cod Paid", "Benktander Paid", "CL Incurred", "BF Incurred",
-             "Cape Cod Incurred", "Benktander Incurred", "Company booked"]
+             "Cape Cod Incurred", "Benktander Incurred", "MCL Paid", "MCL Incurred", "Company booked"]
     counts = df.groupby("lob").size()
     cols = [f"{l} (n={counts[l]})" for l in LINES]
 
@@ -355,6 +365,114 @@ def backtest_section(sims: int) -> str:
     ), df, acc, cal
 
 
+def fig_mcl(df: pd.DataFrame, path: Path) -> None:
+    series = ["CL Paid", "CL Incurred", "MCL Paid", "MCL Incurred"]
+    lines = list(LINES)
+    fig, ax = plt.subplots(figsize=(7.2, 3.4))
+    for k, (m, c) in enumerate(zip(series, C)):
+        err = (df[f"ult::{m}"] - df.actual_ult) / df.actual_unpaid
+        med = [err[df.lob == l].median() for l in lines]
+        y = np.arange(len(lines)) + (k - 1.5) * 0.12
+        ax.scatter(med, y, color=c, s=46, label=m, zorder=3, edgecolor=SURFACE, linewidth=1.5)
+    ax.axvline(0, color=MUTED, lw=0.8)
+    ax.set_yticks(np.arange(len(lines)), [LINES[l] for l in lines])
+    ax.invert_yaxis()
+    ax.xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(1.0, decimals=0))
+    ax.set_xlabel("Median reserve error (% of actual unpaid)")
+    ax.set_title("Munich chain ladder pulls paid and incurred together")
+    ax.legend(fontsize=8, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    fig.tight_layout()
+    fig.savefig(path)
+    plt.close(fig)
+
+
+def extensions_section(df: pd.DataFrame, cal: pd.DataFrame) -> str:
+    fig_mcl(df, FIG / "mcl_by_line.png")
+
+    def rel(m):
+        return (df[f"ult::{m}"] - df.actual_ult) / df.actual_unpaid
+
+    gap_cl = (df["ult::CL Paid"] / df["ult::CL Incurred"] - 1).abs().median()
+    gap_mcl = (df["ult::MCL Paid"] / df["ult::MCL Incurred"] - 1).abs().median()
+    mcl_tbl = pd.DataFrame({m: {"median error": rel(m).median(), "median |error|": rel(m).abs().median(),
+                                "within ±20%": (rel(m).abs() <= 0.2).mean()}
+                            for m in ["CL Paid", "CL Incurred", "MCL Paid", "MCL Incurred"]}).T
+
+    sh = cal.set_index(["model", "basis"]).loc[
+        [("ODP bootstrap", "incurred"), ("ODP bootstrap (Shapland)", "incurred"),
+         ("ODP bootstrap", "paid"), ("ODP bootstrap (Shapland)", "paid")],
+        ["below_p10", "inside_p10_p90", "above_p90", "ks_pvalue", "median_cv"]]
+
+    ts = bt.tail_study()
+    ts.to_csv(OUT / "tail_study.csv", index=False)
+    errs = ["err::exponential", "err::inverse_power"]
+    tail_tbl = ts.groupby("lob")[errs].median().loc[list(LINES)]
+    tail_tbl["abs_exp"] = ts.groupby("lob")["err::exponential"].apply(lambda v: v.abs().median()).loc[list(LINES)]
+    tail_tbl.loc["all lines"] = [*ts[errs].median(), ts["err::exponential"].abs().median()]
+    tail_tbl.columns = ["exponential: median error", "inverse power: median error", "exponential: median |error|"]
+
+    it = bt.industry_tails()
+    it["paid tail (inverse power)"] = bt.industry_tails(curve="inverse_power")["paid_tail_curve"]
+    it = it.rename(columns={"paid_tail_curve": "paid tail (exponential)",
+                            "incurred_over_paid_10": "case incurred / paid at age 10",
+                            "bulk_ibnr_10": "IBNR still booked at age 10"})
+    it.index = [LINES[l] for l in it.index]
+
+    def f(v):
+        return f"{v:.0%}"
+
+    def fs(v):
+        return f"{v:+.0%}"
+
+    def f3(v):
+        return f"{v:.3f}"
+
+    return (
+        "## 4. Extensions\n\n"
+        "### 4.1 Munich chain ladder\n\n"
+        "Quarg & Mack (2004) regress each year's next development factor on its current paid/incurred "
+        "ratio residual: a year that is under-paid relative to its case incurred develops faster on paid "
+        "and slower on incurred. Validated against chainladder-python to the cent (section 1).\n\n"
+        + md_table(mcl_tbl, {"median error": fs, "median |error|": f, "within ±20%": f})
+        + f"\n\nMedian gap between the paid and incurred ultimates: **{gap_cl:.1%}** with separate chain "
+        f"ladders, **{gap_mcl:.1%}** with MCL.\n\n![mcl](figures/mcl_by_line.png)\n\n"
+        "### 4.2 Berquist-Sherman without claim counts\n\n"
+        "Schedule P in this database has no claim counts, so the classic disposal-rate adjustment is not "
+        "available. The natural substitute restates historical paid to the latest diagonal's paid/incurred "
+        "ratio (`reserving/adjustments.py`). On the data it reproduces incurred chain ladder *exactly*, and "
+        "the algebra shows why: every adjusted column is a constant multiple of the incurred column, so the "
+        "projection telescopes to `U_CL,incurred x r_10`, and the paid-to-incurred tail cancels `r_10`. "
+        "A settlement adjustment that measures speed against incurred can only return the incurred answer; "
+        "the independent information in Berquist-Sherman comes from the claim counts. (Asserted in "
+        "`tests/test_extensions.py`.)\n\n"
+        "### 4.3 Shapland refinements to the bootstrap\n\n"
+        "Hat-matrix residual adjustment and separate scale parameters for groups of development ages "
+        "(Shapland 2016). On incurred data, where tiny late-age incremental means inflated a single scale "
+        "parameter, the refinements make the distribution materially narrower while keeping coverage close "
+        "to nominal. On paid data they change little, because the paid failure is a biased mean, not a "
+        "mis-sized spread.\n\n"
+        + md_table(sh, {"below_p10": f, "inside_p10_p90": f, "above_p90": f,
+                        "ks_pvalue": lambda v: f"{v:.3f}", "median_cv": lambda v: f"{v:.1%}"})
+        + "\n\n### 4.4 Tail factors\n\n"
+        "**Can a curve extrapolate development?** Each company's paid triangle is cut at age 5. Exponential "
+        "and inverse-power curves are fitted to the factors for ages 2-5 and asked to predict the development "
+        "from age 6 to 10, which the triangle actually shows. Error is relative to the true development "
+        "portion (CDF - 1).\n\n"
+        + md_table(tail_tbl, {tail_tbl.columns[0]: fs, tail_tbl.columns[1]: fs, tail_tbl.columns[2]: f})
+        + "\n\nThe exponential curve is close to unbiased overall but misses by about half the development "
+        "for a typical single company; the inverse power curve roughly doubles it. Tails belong on industry "
+        "aggregates, and the choice of curve is itself a material assumption.\n\n"
+        "**How far from ultimate is lag 10?** Industry aggregates of the clean companies:\n\n"
+        + md_table(it[["case incurred / paid at age 10", "IBNR still booked at age 10",
+                       "paid tail (exponential)", "paid tail (inverse power)"]],
+                   {"case incurred / paid at age 10": f3, "IBNR still booked at age 10": lambda v: f"{v:.1%}",
+                    "paid tail (exponential)": f3, "paid tail (inverse power)": f3})
+        + "\n\nFor the auto lines lag 10 is effectively ultimate. Workers' comp still had about 6% of losses "
+        "in case reserves and 3% in IBNR at age 10, so the backtest's 'actual' understates true ultimate "
+        "there by a few percent, a shortfall every method shares.\n"
+    )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--sims", type=int, default=2000, help="bootstrap simulations per triangle in the backtest")
@@ -371,8 +489,9 @@ def main() -> None:
     ]
     for i, (lob, code, headline) in enumerate(SHOWCASES, 1):
         parts.append(showcase_section(i, lob, code, headline, sims=10_000))
-    text, *_ = backtest_section(args.sims)
+    text, df, acc, cal = backtest_section(args.sims)
     parts.append(text)
+    parts.append(extensions_section(df, cal))
     (OUT / "REPORT.md").write_text("\n".join(parts))
     print(f"wrote {OUT / 'REPORT.md'}")
 

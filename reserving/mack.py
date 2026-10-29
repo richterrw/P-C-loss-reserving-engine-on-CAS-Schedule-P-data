@@ -16,7 +16,13 @@ from .chainladder import ChainLadderResult, chain_ladder
 from .triangle import Triangle
 
 
-def mack_sigma2(tri: Triangle, f: np.ndarray) -> np.ndarray:
+def mack_sigma2(tri: Triangle, f: np.ndarray, extrapolation: str = "mack") -> np.ndarray:
+    """Mack's sigma^2 by age; the last age (one link ratio) is extrapolated.
+
+    ``mack``: min(s_{n-3}^4 / s_{n-4}^2, s_{n-4}^2, s_{n-3}^2) as in Mack (1993).
+    ``log-linear``: regress log(sigma) on age and read off the last age, the
+    default in R ``MunichChainLadder`` and chainladder-python.
+    """
     v = tri.values
     n = tri.n
     s2 = np.full(n - 1, np.nan)
@@ -28,6 +34,12 @@ def mack_sigma2(tri: Triangle, f: np.ndarray) -> np.ndarray:
         with np.errstate(divide="ignore", invalid="ignore"):
             terms = np.where(c0 > 0, c0 * (c1 / c0 - f[k]) ** 2, 0.0)
         s2[k] = terms.sum() / (m - 1)
+    if extrapolation == "log-linear":
+        ok = np.isfinite(s2) & (s2 > 0)
+        ages = np.arange(n - 1)
+        b = np.polyfit(ages[ok], np.log(np.sqrt(s2[ok])), 1)
+        s2[n - 2] = np.exp(np.polyval(b, n - 2)) ** 2
+        return s2
     # Mack's extrapolation for the last age, where only one ratio exists.
     a = s2[n - 3]
     b = s2[n - 4] if n >= 4 else np.nan

@@ -6,8 +6,11 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
-from .data import LINES, clean_companies
+from .data import LINES, clean_companies, company
 from .engine import BASES, analyze
+from .chainladder import development_factors
+from .tail import CURVES, curve_extrapolation_test, tail_factor
+from .triangle import Triangle
 
 
 def run_company(lob: str, code: int, n_sims: int, seed: int) -> dict:
@@ -31,6 +34,9 @@ def run_company(lob: str, code: int, n_sims: int, seed: int) -> dict:
         row[f"mack_cv::{b}"] = m.total_se / (latest + m.reserve.sum())
         row[f"boot_pct::{b}"] = a.boot[b].rank_of(target - latest)
         row[f"boot_cv::{b}"] = a.boot[b].total_se / (latest + a.boot[b].total.mean())
+        sh = a.boot_shapland[b]
+        row[f"shap_pct::{b}"] = sh.rank_of(target - latest)
+        row[f"shap_cv::{b}"] = sh.total_se / (latest + sh.total.mean())
         row[f"cl_ult::{b}"] = latest + m.reserve.sum()
         row[f"target::{b}"] = target
     return row
@@ -81,14 +87,63 @@ def calibration_table(df: pd.DataFrame) -> pd.DataFrame:
     look calibrated simply by being uninformatively wide.
     """
     out = []
-    for model in ("mack", "boot"):
+    names = {"mack": "Mack (lognormal)", "boot": "ODP bootstrap", "shap": "ODP bootstrap (Shapland)"}
+    for model in names:
         for b in BASES:
             p = df[f"{model}_pct::{b}"].dropna().to_numpy()
             out.append({
-                "model": {"mack": "Mack (lognormal)", "boot": "ODP bootstrap"}[model], "basis": b, "n": len(p),
+                "model": names[model], "basis": b, "n": len(p),
                 "below_p10": (p < 0.10).mean(), "inside_p10_p90": ((p >= 0.10) & (p <= 0.90)).mean(),
                 "above_p90": (p > 0.90).mean(), "median_pct": np.median(p),
                 "ks_pvalue": stats.kstest(p, "uniform").pvalue,
                 "median_cv": df[f"{model}_cv::{b}"].abs().median(),
             })
     return pd.DataFrame(out)
+
+
+def tail_study(lines=None, k: int = 5) -> pd.DataFrame:
+    """Curve extrapolation test on every clean company's paid triangle.
+
+    Paid only: incurred development past age 6 hovers around 1.0 (often
+    below), so a relative error on (f - 1) is meaningless there.
+
+    Error is measured on the development portion: (predicted - actual) / (actual - 1)
+    for the cumulative factor from age ``k + 1`` to 10.
+    """
+    rows = []
+    for lob in lines or LINES:
+        for code in clean_companies(lob):
+            cd = company(lob, code)
+            t = curve_extrapolation_test(cd.paid, k=k)
+            row = {"lob": lob, "grcode": code, "actual": t["actual"]}
+            for c in CURVES:
+                row[c] = t[c]
+                row[f"err::{c}"] = (t[c] - t["actual"]) / (t["actual"] - 1) if t["actual"] > 1 else np.nan
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def industry_tails(lines=None, curve: str = "exponential", start: int = 2) -> pd.DataFrame:
+    """How much development each line still has beyond age 10, on industry aggregates.
+
+    ``paid_tail_curve`` extrapolates the aggregate paid factors with ``curve``;
+    ``incurred_over_paid_10`` is the observed gap between case incurred and
+    paid at age 10 for AY 1988 (outstanding case reserves).  ``bulk_ibnr_10``
+    is the IBNR companies still carried at age 10, as a share of case incurred.
+    """
+    rows = []
+    for lob in lines or LINES:
+        P = I = B = None
+        for code in clean_companies(lob):
+            cd = company(lob, code)
+            p, i, b = (np.nan_to_num(x) for x in (cd.paid_square, cd.incurred_square, cd.booked_square))
+            P, I, B = (p, i, b) if P is None else (P + p, I + i, B + b)
+        paid_tri = Triangle.from_square(P, cd.origins)
+        f = development_factors(paid_tri)
+        rows.append({
+            "lob": lob,
+            "paid_tail_curve": tail_factor(f, curve, start),
+            "incurred_over_paid_10": I[0, -1] / P[0, -1],
+            "bulk_ibnr_10": B[0, -1] / I[0, -1] - 1,
+        })
+    return pd.DataFrame(rows).set_index("lob")

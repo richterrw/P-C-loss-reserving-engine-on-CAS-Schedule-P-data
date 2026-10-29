@@ -3,7 +3,7 @@ name = "reserving"
 version = "0.1.0"
 description = "Chain ladder, Bornhuetter-Ferguson, Mack and ODP bootstrap reserving engine on CAS Schedule P data"
 requires-python = ">=3.10"
-dependencies = ["numpy>=1.26", "pandas>=2.1", "scipy>=1.11", "matplotlib>=3.8", "tabulate>=0.9"]
+dependencies = ["numpy>=1.26", "pandas>=2.1", "scipy>=1.11", "matplotlib>=3.10", "tabulate>=0.9"]
 
 [tool.setuptools]
 packages = ["reserving"]

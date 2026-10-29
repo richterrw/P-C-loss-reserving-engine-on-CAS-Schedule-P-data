@@ -67,7 +67,58 @@ def fitted_incrementals(tri: Triangle) -> np.ndarray:
     return np.diff(m_cum, axis=1, prepend=0.0)
 
 
-def odp_bootstrap(tri: Triangle, n_sims: int = 5000, seed: int | None = 12345, process: bool = True) -> BootstrapResult:
+def hat_diagonal(m: np.ndarray, obs: np.ndarray) -> np.ndarray:
+    """Leverage of each observed cell in the ODP GLM (log link, origin + age effects).
+
+    H = W^1/2 X (X'WX)^-1 X' W^1/2 with Poisson working weights W = |m|.
+    The chain ladder fitted values are the GLM fitted values, so only the
+    design matrix is needed.  Corner cells have leverage 1.
+    """
+    n = m.shape[0]
+    cells = np.argwhere(obs)
+    X = np.zeros((len(cells), 2 * n - 1))
+    X[:, 0] = 1.0
+    for r, (i, j) in enumerate(cells):
+        if i > 0:
+            X[r, i] = 1.0
+        if j > 0:
+            X[r, n - 1 + j] = 1.0
+    w = np.abs(m[obs])
+    Xw = X * np.sqrt(w)[:, None]
+    h = np.einsum("ij,ij->i", Xw @ np.linalg.pinv(Xw.T @ Xw), Xw)
+    out = np.full(m.shape, np.nan)
+    out[obs] = np.clip(h, 0.0, 1.0)
+    return out
+
+
+def auto_hetero_groups(n: int, min_cells: int = 10) -> list[list[int]]:
+    """Contiguous development-age groups with at least ``min_cells`` residuals each."""
+    groups, cur, count = [], [], 0
+    for j in range(n):
+        cur.append(j)
+        count += n - j - (1 if j in (0, n - 1) else 0)  # corner cells carry no residual
+        if count >= min_cells:
+            groups.append(cur)
+            cur, count = [], 0
+    if cur:
+        if groups:
+            groups[-1].extend(cur)
+        else:
+            groups.append(cur)
+    return groups
+
+
+def odp_bootstrap(tri: Triangle, n_sims: int = 5000, seed: int | None = 12345, process: bool = True,
+                  hat_adjust: bool = False, hetero: bool | list[list[int]] = False) -> BootstrapResult:
+    """ODP bootstrap.
+
+    ``hat_adjust`` replaces the degrees-of-freedom factor with the per-cell
+    leverage adjustment r / sqrt(1 - h) (Shapland 2016, sec. 3.1).
+    ``hetero`` estimates a separate scale parameter for groups of development
+    ages, standardises residuals across groups before pooling, and uses each
+    group's own scale for process risk (Shapland 2016, sec. 3.4).  Pass a list
+    of age-index groups, or True for :func:`auto_hetero_groups`.
+    """
     rng = np.random.default_rng(seed)
     n = tri.n
     obs = upper_mask(n)
@@ -81,18 +132,41 @@ def odp_bootstrap(tri: Triangle, n_sims: int = 5000, seed: int | None = 12345, p
     n_obs = int(obs.sum())
     n_par = 2 * n - 1
     dof = n_obs - n_par
-    phi = float(np.nansum(r**2) / dof)
-    r_adj = r * np.sqrt(n_obs / dof)
 
     # Corner cells are fitted exactly (residual identically zero); keep them out of the pool.
     pool_mask = obs.copy()
     pool_mask[0, n - 1] = pool_mask[n - 1, 0] = False
-    pool = r_adj[pool_mask & np.isfinite(r_adj)]
 
-    # --- pseudo triangles (n_sims, n, n)
+    if hat_adjust:
+        h = hat_diagonal(m, obs)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            r_adj = np.where(pool_mask & (h < 1 - 1e-9), r / np.sqrt(1 - h), np.nan)
+    else:
+        r_adj = r * np.sqrt(n_obs / dof)
+
+    # Scale parameter(s): one per development-age group (a single group by default).
+    groups = (auto_hetero_groups(n) if hetero is True else hetero) if hetero else [list(range(n))]
+    age_group = np.zeros(n, dtype=int)
+    for g, ages in enumerate(groups):
+        age_group[ages] = g
+    cell_group = np.broadcast_to(age_group, (n, n))
+    phi_all = float(np.nansum(r**2) / dof)
+    phi_g = np.empty(len(groups))
+    for g in range(len(groups)):
+        sel = pool_mask & (cell_group == g) & np.isfinite(r)
+        k = sel.sum()
+        phi_g[g] = (np.nansum(r[sel] ** 2) / k) * (n_obs / dof) if k else phi_all
+    phi_g = np.where(phi_g > 0, phi_g, phi_all)
+    scale = np.sqrt(phi_all / phi_g)          # standardising factor per group
+    cell_scale = scale[cell_group]
+
+    pool = (r_adj * cell_scale)[pool_mask & np.isfinite(r_adj)]
+
+    # --- pseudo triangles (n_sims, n, n): residuals de-standardised into each cell's group
     draws = rng.choice(pool, size=(n_sims, n_obs), replace=True)
     r_star = np.zeros((n_sims, n, n))
     r_star[:, obs] = draws
+    r_star /= cell_scale
     q_star = np.where(obs, m + r_star * root, 0.0)
     q_star = np.nan_to_num(q_star)
     c_star = np.cumsum(q_star, axis=2)
@@ -114,19 +188,22 @@ def odp_bootstrap(tri: Triangle, n_sims: int = 5000, seed: int | None = 12345, p
         prev = np.concatenate([latest[:, None], cum[:, :-1]], axis=1)
         mu = cum - prev
         if process:
-            mu = _odp_process(rng, mu, phi)
+            mu = _odp_process(rng, mu, phi_g[age_group[a + 1:]])
         reserves[:, i] = mu.sum(axis=1)
 
     det = chain_ladder(tri, "volume", tail=1.0).reserve
-    return BootstrapResult(reserves, phi, r_adj, det)
+    return BootstrapResult(reserves, phi_all, r_adj, det)
 
 
-def _odp_process(rng: np.random.Generator, mu: np.ndarray, phi: float) -> np.ndarray:
-    """Gamma draws with mean |mu| and variance phi |mu|, carrying mu's sign."""
+def _odp_process(rng: np.random.Generator, mu: np.ndarray, phi) -> np.ndarray:
+    """Gamma draws with mean |mu| and variance phi |mu|, carrying mu's sign.
+
+    ``phi`` is a scalar or one value per column of ``mu``.
+    """
+    phi = np.broadcast_to(np.asarray(phi, dtype=float), mu.shape[-1:])
+    phi = np.broadcast_to(phi, mu.shape)
     a = np.abs(mu)
     out = np.zeros_like(mu)
-    pos = a > 0
-    if phi <= 0:
-        return mu
-    out[pos] = rng.gamma(shape=a[pos] / phi, scale=phi)
-    return np.sign(mu) * out
+    pos = (a > 0) & (phi > 0)
+    out[pos] = rng.gamma(shape=a[pos] / phi[pos], scale=phi[pos])
+    return np.where(phi > 0, np.sign(mu) * out, mu)
