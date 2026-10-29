@@ -1,6 +1,9 @@
 # P&C Loss Reserving Engine on CAS Schedule P Data
 
+**Robbie Richter** · [One-page summary](https://richterrw.github.io/P-C-loss-reserving-engine-on-CAS-Schedule-P-data/) · [Full report](reports/REPORT.md)
+
 [![tests](../../actions/workflows/tests.yml/badge.svg)](../../actions/workflows/tests.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A from-scratch reserving engine (NumPy/SciPy, no actuarial libraries) that runs **chain ladder,
 Bornhuetter-Ferguson, Cape Cod, Benktander, Munich chain ladder, Mack, and the ODP bootstrap (with
@@ -13,7 +16,27 @@ fails in its own way, and you can see why in the triangle.
 > **Full generated report:** [`reports/REPORT.md`](reports/REPORT.md). It has validation tables,
 > three company deep dives, a backtest of 327 company/line combinations across all six lines, and the
 > extensions (Munich chain ladder, Berquist-Sherman, Shapland bootstrap, tail study).
-> **One-page summary:** [`docs/index.html`](docs/index.html).
+>
+> **One-page summary:** [richterrw.github.io/…](https://richterrw.github.io/P-C-loss-reserving-engine-on-CAS-Schedule-P-data/) (source in [`docs/index.html`](docs/index.html)).
+
+---
+
+## What this project demonstrates
+
+* **Reserving methods from first principles.** Chain ladder, Bornhuetter-Ferguson, Cape Cod,
+  Benktander, Munich chain ladder, Mack and the ODP bootstrap, written from the papers rather than
+  called from a library. This covers core material from the CAS Exam 5 and Exam 7 syllabi
+  (Friedland, Mack, Shapland).
+* **Validation discipline.** Every method reproduces published figures exactly before it is used on
+  real data, and an automated test suite enforces this on every commit.
+* **Testing assumptions against outcomes.** 327 real company triangles are scored against nine years
+  of actual development, so the conclusions rest on outcomes rather than on the models' own
+  assumptions.
+* **Explaining results, not just producing them.** Each disagreement between methods is traced to a
+  cause in the data: leverage, settlement speed, the prior, or case reserve adequacy. The results
+  that cut against the expected story are reported too.
+* **Communicating to different audiences.** A one-page summary for a quick read, this README for
+  practitioners, and a generated report with every table and chart.
 
 ---
 
